@@ -73,9 +73,9 @@ Edit it before running the bot.
 }
 ```
 
-**`maxProxies`** → Assigns proxies from `proxies.txt` (1 per account).  
-**`intervalSeconds`** → How often stats update (**in seconds**).  
-**`maxWorkers`** → Number of threads to use for processing (**performance tuning**).
+**maxProxies** → Assigns proxies from `proxies.txt` (1 per account).  
+**intervalSeconds** → How often stats update (**in seconds**).  
+**maxWorkers** → Number of threads to use for processing (**performance tuning**).
 
 
 ### **`proxies.txt` (Proxy List)**
