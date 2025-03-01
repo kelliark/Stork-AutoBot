@@ -186,6 +186,10 @@ class TokenManager {
         return;
       } catch (err) {
         log(`Refresh token failed for ${this.username}: ${err.message}`, 'ERROR');
+        // Delete the token file if refresh fails.
+        if (fs.existsSync(this.tokenFile)) {
+          fs.unlinkSync(this.tokenFile);
+        }
       }
     }
     const result = await this.auth.authenticateUser();
