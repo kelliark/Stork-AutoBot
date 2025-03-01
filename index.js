@@ -50,7 +50,6 @@ function loadConfig() {
     fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
     return defaultConfig;
   }
-
   const userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   log('Configuration loaded successfully from config.json');
   return userConfig;
@@ -80,7 +79,7 @@ function assignProxiesToAccounts(accounts, allProxies) {
     const maxP = account.maxProxies || 1;
     const subset = [];
     for (let i = 0; i < maxP; i++) {
-      if (allProxies.length === 0) break; // No proxies at all
+      if (allProxies.length === 0) break; // No proxies available
       subset.push(allProxies[index % allProxies.length]);
       index++;
     }
@@ -148,10 +147,7 @@ class TokenManager {
   constructor(accountConfig) {
     this.accountConfig = accountConfig;
     this.username = accountConfig.username;
-    this.tokenFile = path.join(
-      __dirname,
-      `tokens_${this.username.replace(/[^a-zA-Z0-9]/g, '_')}.json`
-    );
+    this.tokenFile = path.join(__dirname, `tokens_${this.username.replace(/[^a-zA-Z0-9]/g, '_')}.json`);
     this.accessToken = null;
     this.refreshToken = null;
     this.idToken = null;
@@ -189,6 +185,7 @@ class TokenManager {
         // Delete the token file if refresh fails.
         if (fs.existsSync(this.tokenFile)) {
           fs.unlinkSync(this.tokenFile);
+          log(`Deleted token file for ${this.username} due to refresh failure`, 'INFO');
         }
       }
     }
@@ -282,33 +279,33 @@ async function getSignedPrices(tokens, accountConfig) {
 }
 
 async function sendValidation(tokens, msgHash, isValid, proxy, accountConfig) {
-    try {
-        const agent = getProxyAgent(proxy);
-        await axios.post(
-            `${config.stork.baseURL}/stork_signed_prices/validations`,
-            { msg_hash: msgHash, valid: isValid },
-            {
-                headers: {
-                    Authorization: `Bearer ${tokens.accessToken}`,
-                    'User-Agent': 'Mozilla/5.0 (Node)',
-                    Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
-                },
-                httpsAgent: agent
-            }
-        );
+  try {
+    const agent = getProxyAgent(proxy);
+    await axios.post(
+      `${config.stork.baseURL}/stork_signed_prices/validations`,
+      { msg_hash: msgHash, valid: isValid },
+      {
+        headers: {
+          Authorization: `Bearer ${tokens.accessToken}`,
+          'User-Agent': 'Mozilla/5.0 (Node)',
+          Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
+        },
+        httpsAgent: agent
+      }
+    );
 
-        // Fetch updated points after validation success
-        const stats = await getUserStats(tokens, accountConfig);
-        const currentPoints = stats?.stats?.stork_signed_prices_valid_count || 0;
+    // Fetch updated points after validation success
+    const stats = await getUserStats(tokens, accountConfig);
+    const currentPoints = stats?.stats?.stork_signed_prices_valid_count || 0;
 
-        // Log success message with colored email & points
-        log(
-            `${chalk.cyan(`[${accountConfig.username}]`)} Validation success for ${msgHash.slice(0, 10)}... via ${proxy || 'no-proxy'} | Points: ${chalk.green(currentPoints)}`
-        );
+    // Log success message with colored email & points
+    log(
+      `${chalk.cyan(`[${accountConfig.username}]`)} Validation success for ${msgHash.slice(0, 10)}... via ${proxy || 'no-proxy'} | Points: ${chalk.green(currentPoints)}`
+    );
 
-    } catch (err) {
-        log(`${chalk.cyan(`[${accountConfig.username}]`)} Validation failed for ${msgHash.slice(0, 10)}...: ${chalk.red(err.message)}`, 'ERROR');
-    }
+  } catch (err) {
+    log(`${chalk.cyan(`[${accountConfig.username}]`)} Validation failed for ${msgHash.slice(0, 10)}...: ${chalk.red(err.message)}`, 'ERROR');
+  }
 }
 
 // -------------- PRICE VALIDATION LOGIC -------------- //
@@ -393,10 +390,15 @@ if (!isMainThread) {
 
     setInterval(() => runValidationProcess(tokenManager, assignedProxies), config.stork.intervalSeconds * 1000);
 
+    // Force a token refresh (delete token file and reauthenticate) every 1 hour
     setInterval(async () => {
+      if (fs.existsSync(tokenManager.tokenFile)) {
+        fs.unlinkSync(tokenManager.tokenFile);
+        log(`[${tokenManager.username}] Token file deleted for forced refresh`, 'WARN');
+      }
       await tokenManager.getValidToken();
-      log(`[${tokenManager.username}] Token refreshed`);
-    }, 50 * 60 * 1000);
+      log(`[${tokenManager.username}] Token refreshed (forced reauth)`);
+    }, 60 * 60 * 1000);
   }
 
   async function main() {
