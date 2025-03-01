@@ -1,15 +1,29 @@
 {
-  "cognito": {
-    "region": "ap-northeast-1",
-    "clientId": "5msns4n49hmg3dftp2tp1t2iuh",
-    "userPoolId": "ap-northeast-1_M22I44OpC",
-    "username": "YOUR EMAIL",
-    "password": "YOUR PASSWORD"
-  },
+  "accounts": [
+    {
+      "region": "ap-northeast-1",
+      "clientId": "5msns4n49hmg3dftp2tp1t2iuh",
+      "userPoolId": "ap-northeast-1_M22I44OpC",
+      "username": "example@gmail.com",
+      "password": "your-password",
+      "maxProxies": 2
+    },
+    {
+      "region": "ap-northeast-1",
+      "clientId": "5msns4n49hmg3dftp2tp1t2iuh",
+      "userPoolId": "ap-northeast-1_M22I44OpC",
+      "username": "example2@gmail.com",
+      "password": "your-password",
+      "maxProxies": 1
+    }
+//  You can add more if you want just put coma(,) above the account until the last one don't put coma like that example2 account
+  ],
   "stork": {
-    "intervalSeconds": 5
+    "baseURL": "https://app-api.jp.stork-oracle.network/v1",
+    "authURL": "https://api.jp.stork-oracle.network/auth",
+    "intervalSeconds": 10
   },
   "threads": {
-    "maxWorkers": 1
+    "maxWorkers": 10
   }
 }
