@@ -66,9 +66,7 @@ function loadGlobalProxies() {
     return [];
   }
   const lines = fs.readFileSync(proxyPath, 'utf8').split('\n');
-  return lines
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#'));
+  return lines.map(l => l.trim()).filter(l => l && !l.startsWith('#'));
 }
 
 // -------------- ASSIGN PROXIES -------------- //
@@ -182,7 +180,6 @@ class TokenManager {
         return;
       } catch (err) {
         log(`Refresh token failed for ${this.username}: ${err.message}`, 'ERROR');
-        // Delete the token file if refresh fails.
         if (fs.existsSync(this.tokenFile)) {
           fs.unlinkSync(this.tokenFile);
           log(`Deleted token file for ${this.username} due to refresh failure`, 'INFO');
@@ -236,7 +233,8 @@ function getProxyAgent(proxy) {
   throw new Error(`Unsupported proxy protocol: ${proxy}`);
 }
 
-async function getUserStats(tokens, accountConfig) {
+// Modified getUserStats to force refresh on 401
+async function getUserStats(tokens, accountConfig, tokenManager) {
   try {
     const response = await axios.get(`${config.stork.baseURL}/me`, {
       headers: {
@@ -247,12 +245,32 @@ async function getUserStats(tokens, accountConfig) {
     });
     return response.data.data;
   } catch (err) {
-    log(`Error fetching user stats for ${accountConfig.username}: ${err.message}`, 'ERROR');
-    return null;
+    if (err.response && err.response.status === 401 && tokenManager) {
+      log(`Received 401 for ${accountConfig.username}. Forcing token refresh.`, 'WARN');
+      await tokenManager.refreshOrAuthenticate();
+      tokens.accessToken = tokenManager.accessToken;
+      try {
+        const response = await axios.get(`${config.stork.baseURL}/me`, {
+          headers: {
+            Authorization: `Bearer ${tokens.accessToken}`,
+            'User-Agent': 'Mozilla/5.0 (Node)',
+            Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
+          }
+        });
+        return response.data.data;
+      } catch (err2) {
+        log(`After forced refresh, error fetching user stats for ${accountConfig.username}: ${err2.message}`, 'ERROR');
+        return null;
+      }
+    } else {
+      log(`Error fetching user stats for ${accountConfig.username}: ${err.message}`, 'ERROR');
+      return null;
+    }
   }
 }
 
-async function getSignedPrices(tokens, accountConfig) {
+// Modified getSignedPrices to force refresh on 401
+async function getSignedPrices(tokens, accountConfig, tokenManager) {
   try {
     const response = await axios.get(`${config.stork.baseURL}/stork_signed_prices`, {
       headers: {
@@ -273,11 +291,41 @@ async function getSignedPrices(tokens, accountConfig) {
       };
     });
   } catch (err) {
-    log(`Error fetching signed prices for ${accountConfig.username}: ${err.message}`, 'ERROR');
-    return [];
+    if (err.response && err.response.status === 401 && tokenManager) {
+      log(`Received 401 for ${accountConfig.username} on signed prices. Forcing token refresh.`, 'WARN');
+      await tokenManager.refreshOrAuthenticate();
+      tokens.accessToken = tokenManager.accessToken;
+      try {
+        const response = await axios.get(`${config.stork.baseURL}/stork_signed_prices`, {
+          headers: {
+            Authorization: `Bearer ${tokens.accessToken}`,
+            'User-Agent': 'Mozilla/5.0 (Node)',
+            Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
+          }
+        });
+        const data = response.data.data;
+        return Object.keys(data).map(assetKey => {
+          const assetData = data[assetKey];
+          return {
+            asset: assetKey,
+            msg_hash: assetData.timestamped_signature.msg_hash,
+            price: assetData.price,
+            timestamp: new Date(assetData.timestamped_signature.timestamp / 1000000).toISOString(),
+            ...assetData
+          };
+        });
+      } catch (err2) {
+        log(`After forced refresh, error fetching signed prices for ${accountConfig.username}: ${err2.message}`, 'ERROR');
+        return [];
+      }
+    } else {
+      log(`Error fetching signed prices for ${accountConfig.username}: ${err.message}`, 'ERROR');
+      return [];
+    }
   }
 }
 
+// In the worker thread, we do not attempt to refresh tokens.
 async function sendValidation(tokens, msgHash, isValid, proxy, accountConfig) {
   try {
     const agent = getProxyAgent(proxy);
@@ -293,7 +341,7 @@ async function sendValidation(tokens, msgHash, isValid, proxy, accountConfig) {
         httpsAgent: agent
       }
     );
-
+      
     // Fetch updated points after validation success
     const stats = await getUserStats(tokens, accountConfig);
     const currentPoints = stats?.stats?.stork_signed_prices_valid_count || 0;
@@ -308,7 +356,6 @@ async function sendValidation(tokens, msgHash, isValid, proxy, accountConfig) {
   }
 }
 
-// -------------- PRICE VALIDATION LOGIC -------------- //
 function validatePrice(priceData) {
   if (!priceData.msg_hash || !priceData.price || !priceData.timestamp) {
     return false;
@@ -320,7 +367,6 @@ function validatePrice(priceData) {
   return true;
 }
 
-// -------------- WORKER THREAD -------------- //
 if (!isMainThread) {
   (async () => {
     const { priceData, tokens, proxy, accountConfig } = workerData;
@@ -333,7 +379,9 @@ if (!isMainThread) {
     }
   })();
 } else {
-  // -------------- MAIN THREAD -------------- //
+  // Global map to hold token manager references for each account.
+  const tokenManagerReference = {};
+
   async function runValidationProcess(tokenManager, assignedProxies) {
     try {
       const tokens = {
@@ -342,8 +390,8 @@ if (!isMainThread) {
         refreshToken: tokenManager.refreshToken
       };
 
-      const userStats = await getUserStats(tokens, tokenManager.accountConfig);
-      const signedPrices = await getSignedPrices(tokens, tokenManager.accountConfig);
+      const userStats = await getUserStats(tokens, tokenManager.accountConfig, tokenManager);
+      const signedPrices = await getSignedPrices(tokens, tokenManager.accountConfig, tokenManager);
       if (!signedPrices.length) {
         log(`[${tokenManager.username}] No data to validate`);
         return;
@@ -357,8 +405,7 @@ if (!isMainThread) {
       }
 
       let proxyIndex = 0;
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
+      for (const batch of batches) {
         batch.forEach(priceData => {
           const proxy = assignedProxies.length ? assignedProxies[proxyIndex % assignedProxies.length] : null;
           proxyIndex++;
@@ -383,6 +430,7 @@ if (!isMainThread) {
 
   async function startForAccount(accountObj, assignedProxies) {
     const tokenManager = new TokenManager(accountObj);
+    tokenManagerReference[accountObj.username] = tokenManager;
     await tokenManager.init();
     log(`[${tokenManager.username}] Initial token ready`);
 
@@ -390,7 +438,7 @@ if (!isMainThread) {
 
     setInterval(() => runValidationProcess(tokenManager, assignedProxies), config.stork.intervalSeconds * 1000);
 
-    // Force a token refresh (delete token file and reauthenticate) every 1 hour
+    // Force token refresh every hour by deleting the token file and reauthenticating.
     setInterval(async () => {
       if (fs.existsSync(tokenManager.tokenFile)) {
         fs.unlinkSync(tokenManager.tokenFile);
