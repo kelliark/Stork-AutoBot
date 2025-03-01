@@ -1,38 +1,24 @@
 {
-  "name": "stork-auto-bot",
+  "name": "stork-autobot",
   "version": "1.0.0",
-  "description": "Automated validation bot for Stork Oracle network",
+  "description": "Automated bot for interacting with the Stork Verify Network.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/airdropinsiders/Stork-Auto-Bot.git"
-  },
-  "keywords": [
-    "stork",
-    "oracle",
-    "validation",
-    "bot",
-    "automation"
-  ],
-  "author": "Airdrop Insiders",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/airdropinsiders/Stork-Auto-Bot/issues"
-  },
-  "homepage": "https://github.com/airdropinsiders/Stork-Auto-Bot#readme",
   "dependencies": {
-    "amazon-cognito-identity-js": "^6.3.1",
-    "axios": "^1.6.2",
-    "fs": "0.0.1-security",
+    "amazon-cognito-identity-js": "^6.0.1",
+    "axios": "^1.5.1",
+    "chalk": "^5.0.0",
+    "blessed": "^0.1.81",
     "https-proxy-agent": "^7.0.2",
-    "path": "^0.12.7",
-    "socks-proxy-agent": "^8.0.1"
+    "socks-proxy-agent": "^7.0.0"
   },
   "engines": {
-    "node": ">=14.0.0"
-  }
+    "node": ">=16.0.0"
+  },
+  "keywords": ["stork", "bot", "network", "automation"],
+  "author": "Kelliark",
+  "license": "MIT"
 }
