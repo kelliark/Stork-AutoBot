@@ -1,0 +1,3 @@
+// http://username:password@proxy1.com:8080
+// socks5://username:password@proxy2.com:1080
+// delete this and add your own proxy
