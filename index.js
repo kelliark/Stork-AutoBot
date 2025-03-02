@@ -7,7 +7,7 @@ const { Worker, isMainThread, parentPort, workerData } = require('worker_threads
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 
-global.navigator = { userAgent: 'node' }; 
+global.navigator = { userAgent: 'node' };
 
 // -------------- LOGGING WITH COLORS -------------- //
 function log(message, type = 'INFO') {
@@ -54,7 +54,6 @@ function loadConfig() {
   log('Configuration loaded successfully from config.json');
   return userConfig;
 }
-
 const config = loadConfig();
 
 // -------------- PROXY LOADING -------------- //
@@ -77,14 +76,11 @@ function assignProxiesToAccounts(accounts, allProxies) {
     const maxP = account.maxProxies || 1;
     const subset = [];
     for (let i = 0; i < maxP; i++) {
-      if (allProxies.length === 0) break; // No proxies available
+      if (allProxies.length === 0) break;
       subset.push(allProxies[index % allProxies.length]);
       index++;
     }
-    assigned.push({
-      account,
-      proxies: subset
-    });
+    assigned.push({ account, proxies: subset });
   });
   return assigned;
 }
@@ -233,35 +229,26 @@ function getProxyAgent(proxy) {
   throw new Error(`Unsupported proxy protocol: ${proxy}`);
 }
 
-// Modified getUserStats to force refresh on 401
-async function getUserStats(tokens, accountConfig, tokenManager) {
+// We'll use a more common browser UA to try to avoid WAF blocks.
+const commonUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36";
+
+// Modified getUserStats: if error status is 401/403, force refresh and retry (max 1 retry).
+async function getUserStats(tokenManager, accountConfig, retry = 0) {
+  const token = await tokenManager.getValidToken();
   try {
     const response = await axios.get(`${config.stork.baseURL}/me`, {
       headers: {
-        Authorization: `Bearer ${tokens.accessToken}`,
-        'User-Agent': 'Mozilla/5.0 (Node)',
+        Authorization: `Bearer ${token}`,
+        'User-Agent': commonUserAgent,
         Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
       }
     });
     return response.data.data;
   } catch (err) {
-    if (err.response && err.response.status === 401 && tokenManager) {
-      log(`Received 401 for ${accountConfig.username}. Forcing token refresh.`, 'WARN');
+    if (err.response && (err.response.status === 401 || err.response.status === 403) && retry < 1) {
+      log(`Received ${err.response.status} for ${accountConfig.username}. Forcing token refresh.`, 'WARN');
       await tokenManager.refreshOrAuthenticate();
-      tokens.accessToken = tokenManager.accessToken;
-      try {
-        const response = await axios.get(`${config.stork.baseURL}/me`, {
-          headers: {
-            Authorization: `Bearer ${tokens.accessToken}`,
-            'User-Agent': 'Mozilla/5.0 (Node)',
-            Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
-          }
-        });
-        return response.data.data;
-      } catch (err2) {
-        log(`After forced refresh, error fetching user stats for ${accountConfig.username}: ${err2.message}`, 'ERROR');
-        return null;
-      }
+      return getUserStats(tokenManager, accountConfig, retry + 1);
     } else {
       log(`Error fetching user stats for ${accountConfig.username}: ${err.message}`, 'ERROR');
       return null;
@@ -269,13 +256,14 @@ async function getUserStats(tokens, accountConfig, tokenManager) {
   }
 }
 
-// Modified getSignedPrices to force refresh on 401
-async function getSignedPrices(tokens, accountConfig, tokenManager) {
+// Modified getSignedPrices: similar logic.
+async function getSignedPrices(tokenManager, accountConfig, retry = 0) {
+  const token = await tokenManager.getValidToken();
   try {
     const response = await axios.get(`${config.stork.baseURL}/stork_signed_prices`, {
       headers: {
-        Authorization: `Bearer ${tokens.accessToken}`,
-        'User-Agent': 'Mozilla/5.0 (Node)',
+        Authorization: `Bearer ${token}`,
+        'User-Agent': commonUserAgent,
         Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
       }
     });
@@ -291,33 +279,10 @@ async function getSignedPrices(tokens, accountConfig, tokenManager) {
       };
     });
   } catch (err) {
-    if (err.response && err.response.status === 401 && tokenManager) {
-      log(`Received 401 for ${accountConfig.username} on signed prices. Forcing token refresh.`, 'WARN');
+    if (err.response && (err.response.status === 401 || err.response.status === 403) && retry < 1) {
+      log(`Received ${err.response.status} for ${accountConfig.username} on signed prices. Forcing token refresh.`, 'WARN');
       await tokenManager.refreshOrAuthenticate();
-      tokens.accessToken = tokenManager.accessToken;
-      try {
-        const response = await axios.get(`${config.stork.baseURL}/stork_signed_prices`, {
-          headers: {
-            Authorization: `Bearer ${tokens.accessToken}`,
-            'User-Agent': 'Mozilla/5.0 (Node)',
-            Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
-          }
-        });
-        const data = response.data.data;
-        return Object.keys(data).map(assetKey => {
-          const assetData = data[assetKey];
-          return {
-            asset: assetKey,
-            msg_hash: assetData.timestamped_signature.msg_hash,
-            price: assetData.price,
-            timestamp: new Date(assetData.timestamped_signature.timestamp / 1000000).toISOString(),
-            ...assetData
-          };
-        });
-      } catch (err2) {
-        log(`After forced refresh, error fetching signed prices for ${accountConfig.username}: ${err2.message}`, 'ERROR');
-        return [];
-      }
+      return getSignedPrices(tokenManager, accountConfig, retry + 1);
     } else {
       log(`Error fetching signed prices for ${accountConfig.username}: ${err.message}`, 'ERROR');
       return [];
@@ -325,7 +290,7 @@ async function getSignedPrices(tokens, accountConfig, tokenManager) {
   }
 }
 
-// In the worker thread, we do not attempt to refresh tokens.
+// Worker thread sendValidation: it logs only the validation success.
 async function sendValidation(tokens, msgHash, isValid, proxy, accountConfig) {
   try {
     const agent = getProxyAgent(proxy);
@@ -335,22 +300,13 @@ async function sendValidation(tokens, msgHash, isValid, proxy, accountConfig) {
       {
         headers: {
           Authorization: `Bearer ${tokens.accessToken}`,
-          'User-Agent': 'Mozilla/5.0 (Node)',
+          'User-Agent': commonUserAgent,
           Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
         },
         httpsAgent: agent
       }
     );
-      
-    // Fetch updated points after validation success
-    const stats = await getUserStats(tokens, accountConfig);
-    const currentPoints = stats?.stats?.stork_signed_prices_valid_count || 0;
-
-    // Log success message with colored email & points
-    log(
-      `${chalk.cyan(`[${accountConfig.username}]`)} Validation success for ${msgHash.slice(0, 10)}... via ${proxy || 'no-proxy'} | Points: ${chalk.green(currentPoints)}`
-    );
-
+    log(`${chalk.cyan(`[${accountConfig.username}]`)} Validation success for ${msgHash.slice(0, 10)}... via ${proxy || 'no-proxy'}`);
   } catch (err) {
     log(`${chalk.cyan(`[${accountConfig.username}]`)} Validation failed for ${msgHash.slice(0, 10)}...: ${chalk.red(err.message)}`, 'ERROR');
   }
@@ -379,31 +335,22 @@ if (!isMainThread) {
     }
   })();
 } else {
-  // Global map to hold token manager references for each account.
-  const tokenManagerReference = {};
+  const tokenManagerRef = {}; // Global map for each account's TokenManager
 
   async function runValidationProcess(tokenManager, assignedProxies) {
     try {
-      const tokens = {
-        accessToken: tokenManager.accessToken,
-        idToken: tokenManager.idToken,
-        refreshToken: tokenManager.refreshToken
-      };
-
-      const userStats = await getUserStats(tokens, tokenManager.accountConfig, tokenManager);
-      const signedPrices = await getSignedPrices(tokens, tokenManager.accountConfig, tokenManager);
+      const userStats = await getUserStats(tokenManager, tokenManager.accountConfig);
+      const signedPrices = await getSignedPrices(tokenManager, tokenManager.accountConfig);
       if (!signedPrices.length) {
         log(`[${tokenManager.username}] No data to validate`);
         return;
       }
-
       const workers = [];
       const chunkSize = Math.ceil(signedPrices.length / config.threads.maxWorkers);
       const batches = [];
       for (let i = 0; i < signedPrices.length; i += chunkSize) {
         batches.push(signedPrices.slice(i, i + chunkSize));
       }
-
       let proxyIndex = 0;
       for (const batch of batches) {
         batch.forEach(priceData => {
@@ -411,7 +358,7 @@ if (!isMainThread) {
           proxyIndex++;
           workers.push(new Promise((resolve) => {
             const worker = new Worker(__filename, {
-              workerData: { priceData, tokens, proxy, accountConfig: tokenManager.accountConfig }
+              workerData: { priceData, tokens: { accessToken: tokenManager.accessToken }, proxy, accountConfig: tokenManager.accountConfig }
             });
             worker.on('message', resolve);
             worker.on('error', (err) => resolve({ success: false, error: err.message }));
@@ -419,10 +366,13 @@ if (!isMainThread) {
           }));
         });
       }
-
       const results = await Promise.all(workers);
       const successCount = results.filter(r => r.success).length;
       log(`[${tokenManager.username}] Finished validation. Success: ${successCount}/${results.length}`);
+      // After validations, fetch updated stats and log updated points.
+      const updatedStats = await getUserStats(tokenManager, tokenManager.accountConfig);
+      const currentPoints = updatedStats?.stats?.stork_signed_prices_valid_count || 'N/A';
+      log(`${chalk.cyan(`[${tokenManager.username}]`)} Updated Points: ${chalk.green(currentPoints)}`);
     } catch (err) {
       log(`[${tokenManager.username}] Validation process error: ${err.message}`, 'ERROR');
     }
@@ -430,15 +380,14 @@ if (!isMainThread) {
 
   async function startForAccount(accountObj, assignedProxies) {
     const tokenManager = new TokenManager(accountObj);
-    tokenManagerReference[accountObj.username] = tokenManager;
+    tokenManagerRef[accountObj.username] = tokenManager;
     await tokenManager.init();
     log(`[${tokenManager.username}] Initial token ready`);
 
     runValidationProcess(tokenManager, assignedProxies);
-
     setInterval(() => runValidationProcess(tokenManager, assignedProxies), config.stork.intervalSeconds * 1000);
 
-    // Force token refresh every hour by deleting the token file and reauthenticating.
+    // Force token refresh every 65 minutes (1 hour 5 minutes)
     setInterval(async () => {
       if (fs.existsSync(tokenManager.tokenFile)) {
         fs.unlinkSync(tokenManager.tokenFile);
@@ -446,7 +395,7 @@ if (!isMainThread) {
       }
       await tokenManager.getValidToken();
       log(`[${tokenManager.username}] Token refreshed (forced reauth)`);
-    }, 60 * 60 * 1000);
+    }, 65 * 60 * 1000);
   }
 
   async function main() {
