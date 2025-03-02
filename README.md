@@ -17,8 +17,14 @@ Use my referral code: `TT21G58VOG`
 
 ## **Requirements**
 1. **Node.js 16+**  
-2. **npm (Node Package Manager)**  
+2. **npm (Node Package Manager)**
 
+## Proxy Setup
+### Recommended Proxy Providers
+- Residential Proxies
+  * [Proxiesfo](https://app.proxies.fo/ref/208a608a-0dbf-13c3-7651-7f5303fc5cb2)
+- Residential Proxies
+  * [Nstp](https://app.nstproxy.com/register?i=42Um5k)
 
 ## **Installation**
 ### **Clone the Repository**
